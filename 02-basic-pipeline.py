@@ -7,6 +7,29 @@ parquet_df = pd.read_parquet('files/example.parquet')
 feather_df = pd.read_feather('files/example.feather')
 
 
+# select columns
+def select_columns(df: pd.DataFrame) -> pd.DataFrame:
+    return df.filter(['colA', 'colB', 'colC'])
+
+# filter rows
+def filter_rows(df: pd.DataFrame) -> pd.DataFrame:
+    return df.query('colC > 0')
+
+# joining
+def merge_other_df(df: pd.DataFrame) -> pd.DataFrame:
+    return df.merge(other=other_df, how='left', on='id')
+
+# cleaning: duplicate rows
+def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
+    return df.drop_duplicates(subset=['id'])
+
+# cleaning: improper missing values
+def proper_missing_values(df: pd.DataFrame) -> pd.DataFrame:
+    missing_tokens = {"", "NA", "NaN", "null", "UNKNOWN"}
+    return df.assign(
+        col_name=df["col_name"].astype("string").str.strip().replace(missing_tokens, pd.NA)
+    )
+
 # cleaning: messy string columns
 def clean_string_col(df: pd.DataFrame) -> pd.DataFrame:
     return df.assign(
@@ -16,19 +39,16 @@ def clean_string_col(df: pd.DataFrame) -> pd.DataFrame:
         .replace({"USA": "US", "UNITED STATES": "US"})
     )
 
-# cleaning: improper missing values
-def proper_missing_values(df: pd.DataFrame) -> pd.DataFrame:
-    missing_tokens = {"", "NA", "NaN", "null", "UNKNOWN"}
-    return df.assign(
-        col_name=df["col_name"].astype("string").str.strip().replace(missing_tokens, pd.NA)
-    )
-
 # cleaning: deal with missing values
 def cleaning_impute_values(df: pd.DataFrame) -> pd.DataFrame:
     return df.assign(
         numeric_col=df["numeric_col"].fillna( df["numeric_col"].median() ),
         numeric_col2=df["numeric_col2"].fillna( 0 )
     )
+
+# cleaning: drop rows with missing values
+def drop_missing_rows(df: pd.DataFrame) -> pd.DataFrame:
+    return df.dropna(subset=['colA', 'colB'])
 
 # feature engineering : 2 simple new columns
 def fe_add_new_cols(df: pd.DataFrame) -> pd.DataFrame:
@@ -43,51 +63,52 @@ def fe_add_age_buckets(df: pd.DataFrame) -> pd.DataFrame:
         age_buckets=pd.cut(df["age"], bins=[0, 16, 65, 120])
     )
 
-# sanity checks on data. if fail, entire pipe ends with AssertionError
-def validate(df: pd.DataFrame) -> pd.DataFrame:
-    assert df["age"].between(0, 120).all()
-    return df
-
-
-# Method 1: groupby + agg (collapses to one row per group)
-df_aggregated = (
-    df
-    .filter(['colA', 'colB', 'colC'])  # select columns 
-    .query('colC > 0')                 # filter rows
-    .merge(                            # joining: (merge safer than 'join')
-        other=other_df,
-        how='left',
-        on='id'
-    )
-    .drop_duplicates(subset=['id'])    # cleaning: duplicate rows? drop rows
-    .pipe(proper_missing_values)       # cleaning: improper missing values -> pd.NA
-    .pipe(clean_string_col)            # cleaning: messy string columns
-    .pipe(cleaning_impute_values)      # cleaning: missing values? impute
-    .dropna(subset=['colA', 'colB'])   # cleaning: missing values? drop rows
-
-    .pipe(fe_add_new_cols)             # feature engineering : 2 simple new columns
-    .pipe(fe_add_age_buckets)          # feature engineering: binning/buckets
-    
-    # Method 1: calculate statistics per group (collapses many rows into one row per group)
-    .groupby('group', as_index=False)  
-    .agg(
+# Method 1 :calculate statistics per group (combines rows)
+def aggregate_by_group(df: pd.DataFrame) -> pd.DataFrame:
+    result = df.groupby('group', as_index=False).agg(
         sum_per_group = ('numeric_col', "sum"),
         avg_per_group = ('numeric_col', "mean"),
         count_per_group = ('id_col', "count"),
         unique_per_group = ('category_col', "nunique")
     )
+    return result
 
-    # Method 2:calculate statistics per group (keeps original rows)
-    .assign(
+# Method 2: calculate statistics per group (keeps original rows)
+def add_group_statistics(df: pd.DataFrame) -> pd.DataFrame:
+    result = df.assign(
         sum_per_group=lambda d: d.groupby('group')['numeric_col'].transform('sum'),
         avg_per_group=lambda d: d.groupby('group')['numeric_col'].transform('mean'),
         count_per_group=lambda d: d.groupby('group')['id_col'].transform('count'),
         unique_per_group=lambda d: d.groupby('group')['category_col'].transform('nunique')
     )
+    return result
 
-    .sort_values('avg_per_group', ascending=False)  # sorting rows
+# sorting rows
+def sort_by_avg(df: pd.DataFrame) -> pd.DataFrame:
+    return df.sort_values('avg_per_group', ascending=False)
+
+# save output
+def save_output(df: pd.DataFrame) -> pd.DataFrame:
+    df.to_parquet('output/processed_data.parquet', index=False)
+    df.to_parquet('s3://my-bucket/processed_data.parquet', index=False)
+    return df
+
+
+# Complete pipeline using .pipe() for all steps
+df_aggregated = (
+    df
+    .pipe(select_columns)
+    .pipe(filter_rows)
+    .pipe(merge_other_df)
+    .pipe(remove_duplicates)
+    .pipe(proper_missing_values)
+    .pipe(clean_string_col)
+    .pipe(cleaning_impute_values)
+    .pipe(drop_missing_rows)
+    .pipe(fe_add_new_cols)
+    .pipe(fe_add_age_buckets)
+    .pipe(aggregate_by_group)
+    .pipe(add_group_statistics)
+    .pipe(sort_by_avg)
+    .pipe(save_output)
 )
-
-# Save locally and upload to S3
-df_aggregated.to_parquet('output/processed_data.parquet', index=False)
-df_aggregated.to_parquet('s3://my-bucket/processed_data.parquet', index=False)

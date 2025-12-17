@@ -27,7 +27,7 @@ for model_family in MODEL_FAMILIES:
 best_model.fit(train_val_data) # retrain on full train+val data with best hyperparameters
 
 test_score = evaluate(best_model, test_data) # final evaluation on untouched test set
-# evaluate functions examples:
-# regressions -> mean squared error or r2
-# binary classification -> AUC-ROC
-# multi-class classification -> F1-score or accuracy
+# evaluate() examples:
+# regressions            ->   mean squared error
+# binary classification  ->   AUC-ROC
+# multi-class classif    ->   F1-score
