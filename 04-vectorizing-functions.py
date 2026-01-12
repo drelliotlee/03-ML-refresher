@@ -1,9 +1,9 @@
-# the purpose of this refresher file is to
-# show what i learned about vectorizing functions in pandas / numpy
-# and when to use which method
+# BROADER CONTEXT:
+# Vectorizing is a feature engineering operation - creating new columns
+# as functions of existing columns. The goal is to do this efficiently
+# so feature engineering is fast even on large datasets.
 #
-# TLDR SUMMARY
-#
+# TLDR SUMMARY:
 # apply = bad
 # np.vectorize = bad
 # njit (for loops) = good
@@ -11,94 +11,89 @@
 # everything else = cant be sped up
 
 
-# ------------------------------------------------------------
-# Sample dataframe
-# ------------------------------------------------------------
 import numpy as np
 import pandas as pd
 from numba import njit
-
-n = 10_000
-df = pd.DataFrame(
-    {
-        "colA": np.random.rand(n),
-        "colB": np.random.rand(n),
-        "some_col": np.random.rand(n),
-        "text": np.random.choice(
-            ["this is great", "bad example", "absolutely amazing", "terrible"],
-            size=n,
-        ),
-    }
-)
 
 # ============================================================
 # PART 1: arithmetic functions can be vectorized
 # ============================================================
 
-def arbitrary_func1(x, y):
+def arith_func(x, y):
     return x + 2 * y
 
-
 # ---- BAD: pandas apply (Python per-row calls) ----
-def add_feature_apply(df: pd.DataFrame) -> pd.DataFrame:
+def vectorized_w_apply(df: pd.DataFrame) -> pd.DataFrame:
     return df.assign(
-        f1=df.apply(lambda r: arbitrary_func1(r["colA"], r["colB"]), axis=1)
+        f1=df.apply(lambda r: arith_func(r["colA"], r["colB"]), axis=1)
     )
 
 
 # ---- BAD: np.vectorize (still Python per-element) ----
-vectorized_bad = np.vectorize(arbitrary_func1)
-
-def add_feature_np_vectorize(df: pd.DataFrame) -> pd.DataFrame:
+def vectorized_w_npvectorize(df: pd.DataFrame) -> pd.DataFrame:
     return df.assign(
-        f1=vectorized_bad(df["colA"].to_numpy(), df["colB"].to_numpy())
+        f1=np.vectorize(lambda x, y: arith_func(x, y))(
+            df["colA"].to_numpy(), df["colB"].to_numpy()
+        )
     )
 
-
 # ---- GOOD: true vectorization (NumPy arithmetic) ----
-def vectorized_func(df: pd.DataFrame) -> pd.DataFrame:
+def vectorized_w_numpy(df: pd.DataFrame) -> pd.DataFrame:
     return df.assign(f1=df["colA"] + 2 * df["colB"])
 
 # ============================================================
-# PART 2: loop-based function (running sum)
-# arbitrary_func2 requires state across rows
+# PART 2: loop-based function
 # ============================================================
 
-def running_sum_python(arr):
+def resetting_cumsum(arr, reset_threshold=0.3):
+    """
+    This represents a function which requires stateful looping.
+    Cumulative sum that resets to 0 whenever a value falls below threshold.
+    Example: [0.5, 0.6, 0.2, 0.4, 0.5] with threshold 0.3
+    Result:  [0.5, 1.1, 0.0, 0.4, 0.9]
+    """
     out = []
     total = 0.0
     for x in arr:
-        total += x
+        if x < reset_threshold:
+            total = 0.0
+        else:
+            total += x
         out.append(total)
     return np.array(out)
 
-
-# ---- BAD: np.vectorize (still Python loop) ----
-vectorized_running_sum = np.vectorize(lambda x, acc=[0.0]: acc.append(acc[-1] + x) or acc[-1])
-
-def add_running_sum_np_vectorize(df: pd.DataFrame) -> pd.DataFrame:
-    # this is intentionally awful
+# ---- BAD: pandas apply (still Python loop, no speedup) ----
+# apply doesn't help because the function itself is a Python loop
+def vectorized_w_apply(df: pd.DataFrame) -> pd.DataFrame:
     arr = df["some_col"].to_numpy()
-    result = vectorized_running_sum(arr)
+    result = resetting_cumsum(arr, reset_threshold=0.3)
     return df.assign(f2=result)
 
+# ---- BAD: np.vectorize (still Python loop, no speedup) ----
+# np.vectorize doesn't actually vectorize, it's just a for loop wrapper
+def vectorized_w_npvectorize(df: pd.DataFrame) -> pd.DataFrame:
+    arr = df["some_col"].to_numpy()
+    result = resetting_cumsum(arr, reset_threshold=0.3)
+    return df.assign(f2=result)
 
 # ---- GOOD: numba njit (compiled loop) ----
+# The original function needs to be rewritten with arrays instead of lists
 @njit
-def running_sum_numba(arr):
+def resetting_cumsum2(arr, reset_threshold=0.3):
     n = arr.shape[0]
-    out = np.empty(n, dtype=np.float64)
+    out = np.empty(n, dtype=np.float64) 
     total = 0.0
     for i in range(n):
-        total += arr[i]
-        out[i] = total
+        if arr[i] < reset_threshold:
+            total = 0.0
+        else:
+            total += arr[i]
+        out[i] = total  
     return out
 
-
-def vectorized_func(df: pd.DataFrame) -> pd.DataFrame:
+def vectorized_w_numba(df: pd.DataFrame) -> pd.DataFrame:
     arr = df["some_col"].to_numpy(dtype=np.float64)
-    return df.assign(f2=running_sum_numba(arr))
-
+    return df.assign(f2=resetting_cumsum2(arr))
 
 # ============================================================
 # PART 3: function that cannot be sped up
@@ -108,8 +103,7 @@ def vectorized_func(df: pd.DataFrame) -> pd.DataFrame:
 POSITIVE = {"great", "amazing"}
 NEGATIVE = {"bad", "terrible"}
 
-
-def arbitrary_func3(s: str) -> int:
+def complex_python_func(s: str) -> int:
     score = 0
     for token in s.lower().split():
         if token in POSITIVE:
@@ -120,9 +114,9 @@ def arbitrary_func3(s: str) -> int:
 
 
 # ---- Only possible implementation: Python apply ----
-def vectorized_func(df: pd.DataFrame) -> pd.DataFrame:
+def vectorized_w_apply(df: pd.DataFrame) -> pd.DataFrame:
     return df.assign(
-        f3=df["text"].apply(arbitrary_func3)
+        f3=df["text"].apply(complex_python_func)
     )
 
 # ============================================================
@@ -131,6 +125,8 @@ def vectorized_func(df: pd.DataFrame) -> pd.DataFrame:
 
 df_final = (
     df
-    .pipe(vectorized_func)
+    .pipe(vectorized_w_numpy)
+    .pipe(vectorized_w_numba)
+    .pipe(vectorized_w_apply)
 )
 

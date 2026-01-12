@@ -32,7 +32,7 @@ def add_date_arithmetic(df: pd.DataFrame) -> pd.DataFrame:
         days_since_start=(df["timestamp"] - df["timestamp"].min()).dt.days,
     )
 
-# resampling aka groupby-like aggregations
+# resampling (aka groupby-like aggregations)
 def resample_to_daily(df: pd.DataFrame) -> pd.DataFrame:
     return (
         df.set_index("timestamp")                                  # requires datetime index
@@ -52,8 +52,8 @@ def handle_timezones(df: pd.DataFrame) -> pd.DataFrame:
 df_features = (
     df
 
-    .set_index("timestamp")             # filter rows by datetime index
-    .sort_index()                       # requires first setting as index and sorting it
+    .set_index("timestamp")             # filtering rows by datetime index
+    .sort_index()                       # first requires setting as index + sorting it
     .loc["2024-01-01":"2024-01-07"]     
 
     .pipe(extract_datetime_features)    # add cols example 1

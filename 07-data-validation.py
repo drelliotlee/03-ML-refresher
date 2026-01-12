@@ -24,8 +24,31 @@ class DataValidator:
     def __init__(self):
         self.errors: List[str] = []
     
+    def check_not_empty(self, df: pd.DataFrame) -> 'DataValidator':
+        """Check if dataframe has at least one row"""
+        if df.empty:
+            self.errors.append("DataFrame is empty (0 rows)")
+        return self
+    
+    def check_columns_exist(self, df: pd.DataFrame, columns: List[str]) -> 'DataValidator':
+        """Check if required columns exist in dataframe"""
+        missing = [col for col in columns if col not in df.columns]
+        if missing:
+            self.errors.append(f"Missing required columns: {missing}")
+        return self
+    
+    def check_dtype(self, df: pd.DataFrame, col: str, expected_dtype: type) -> 'DataValidator':
+        """Check if column has expected data type"""
+        if col not in df.columns:
+            return self  # skip if column doesn't exist (caught by check_columns_exist)
+        if not pd.api.types.is_dtype_equal(df[col].dtype, expected_dtype):
+            self.errors.append(
+                f"{col}: expected dtype {expected_dtype}, got {df[col].dtype}"
+            )
+        return self
+    
     def check_range(self, df: pd.DataFrame, col: str, min_val: float, max_val: float) -> 'DataValidator':
-        """Check if column values are within range"""
+        """Check if a particular column values are within pre-known valid range"""
         invalid = ~df[col].between(min_val, max_val)
         if invalid.any():
             count = invalid.sum()
@@ -36,17 +59,38 @@ class DataValidator:
         return self
     
     def check_no_nulls(self, df: pd.DataFrame, col: str) -> 'DataValidator':
-        """Check for null values"""
+        """Check for null values in a particular column"""
         if df[col].isna().any():
             count = df[col].isna().sum()
             self.errors.append(f"{col}: {count} null values found")
         return self
     
+    def check_null_percentage(self, df: pd.DataFrame, col: str, max_percent: float) -> 'DataValidator':
+        """Check if null percentage has increased above max threshold"""
+        null_pct = (df[col].isna().sum() / len(df)) * 100
+        if null_pct > max_percent:
+            self.errors.append(
+                f"{col}: {null_pct:.1f}% null values (max allowed: {max_percent}%)"
+            )
+        return self
+    
     def check_unique(self, df: pd.DataFrame, col: str) -> 'DataValidator':
-        """Check for duplicate values"""
+        """Check for duplicate values in a particular column"""
         if df[col].duplicated().any():
             count = df[col].duplicated().sum()
             self.errors.append(f"{col}: {count} duplicate values found")
+        return self
+    
+    def check_foreign_key(self, df: pd.DataFrame, col: str, reference_df: pd.DataFrame, ref_col: str) -> 'DataValidator':
+        """Check if all values in col exist in reference_df[ref_col]"""
+        valid_values = set(reference_df[ref_col].unique())
+        invalid = ~df[col].isin(valid_values)
+        if invalid.any():
+            count = invalid.sum()
+            examples = df.loc[invalid, col].unique().tolist()[:3]
+            self.errors.append(
+                f"{col}: {count} values not found in {ref_col}. Examples: {examples}"
+            )
         return self
     
     def check_valid_values(self, df: pd.DataFrame, col: str, valid_values: List[Any]) -> 'DataValidator':
@@ -57,6 +101,20 @@ class DataValidator:
             examples = df.loc[invalid, col].unique().tolist()[:3]
             self.errors.append(
                 f"{col}: {count} invalid values. Examples: {examples}. Expected: {valid_values}"
+            )
+        return self
+    
+    def check_date_range(self, df: pd.DataFrame, col: str, min_date: str, max_date: str) -> 'DataValidator':
+        """Check if dates are within valid range"""
+        df_dates = pd.to_datetime(df[col], errors='coerce')
+        min_dt = pd.to_datetime(min_date)
+        max_dt = pd.to_datetime(max_date)
+        invalid = ~df_dates.between(min_dt, max_dt)
+        if invalid.any():
+            count = invalid.sum()
+            examples = df.loc[invalid, col].head(3).tolist()
+            self.errors.append(
+                f"{col}: {count} dates outside range [{min_date}, {max_date}]. Examples: {examples}"
             )
         return self
     
@@ -72,7 +130,7 @@ class DataValidator:
         return self
     
     def check_positive(self, df: pd.DataFrame, col: str) -> 'DataValidator':
-        """Check if all values are positive"""
+        """Check if all values are positive in a particular column"""
         invalid = df[col] <= 0
         if invalid.any():
             count = invalid.sum()
@@ -91,6 +149,10 @@ class DataValidator:
 def validate_user_data(df: pd.DataFrame) -> pd.DataFrame:
     validator = DataValidator()   
     (validator
+        .check_not_empty(df)
+        .check_columns_exist(df, ["user_id", "age", "email", "salary", "country", "score"])
+        .check_dtype(df, "user_id", np.int64)
+        .check_dtype(df, "age", np.int64)
         .check_no_nulls(df, "user_id")
         .check_unique(df, "user_id")
         .check_range(df, "age", 0, 120)
@@ -98,23 +160,10 @@ def validate_user_data(df: pd.DataFrame) -> pd.DataFrame:
         .check_range(df, "score", 0, 1)
         .check_valid_values(df, "country", ["US", "CA", "UK", "MX"])
         .check_regex(df, "email", r"^[\w\.-]+@[\w\.-]+\.\w+$", "email format")
+        .check_null_percentage(df, "email", max_percent=10.0)
         .validate()
     )
     return df
-
-def get_validation_report(df: pd.DataFrame) -> Dict[str, Any]:
-    validator = DataValidator()
-    (validator
-        .check_range(df, "age", 0, 120)
-        .check_positive(df, "salary")
-        .check_range(df, "score", 0, 1)
-        .check_valid_values(df, "country", ["US", "CA", "UK", "MX"])
-    )
-    return {
-        "is_valid": len(validator.errors) == 0,
-        "error_count": len(validator.errors),
-        "errors": validator.errors,
-    }
 
 
 # USAGE IN PIPELINES
@@ -131,7 +180,11 @@ try:
 except ValidationError as e:
     print(f"❌ Pipeline failed at validation step: {e}")
     print("Generating detailed validation report...")
-    report = get_validation_report(df)
+    report = {
+        "is_valid": False,
+        "error_count": len(e.errors),
+        "errors": e.errors,
+    }
     print(f"  Total issues: {report['error_count']}")
     print(f"  Valid: {report['is_valid']}")
     if report['errors']:
