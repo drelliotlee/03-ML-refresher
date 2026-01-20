@@ -22,6 +22,7 @@ def extract_datetime_features(df: pd.DataFrame) -> pd.DataFrame:
         year=df["timestamp"].dt.year,
         month=df["timestamp"].dt.month,
         day=df["timestamp"].dt.day,
+        hour=df["timestamp"].dt.hour,
     )
 
 # new columns based on date arithmetic
@@ -51,15 +52,16 @@ def handle_timezones(df: pd.DataFrame) -> pd.DataFrame:
 # FINAL PIPELINES
 df_features = (
     df
+    .pipe(extract_datetime_features)    # add cols example 1
+    .pipe(add_date_arithmetic)          # add cols example 2
+    .query('hour >= 6 and hour <= 18')  # filter rows example 2
+
+    .pipe(resample_to_daily)            # resampling, aka groupby-like aggregations
+    .pipe(handle_timezones)             # timezone handling
 
     .set_index("timestamp")             # filtering rows by datetime index
     .sort_index()                       # first requires setting as index + sorting it
     .loc["2024-01-01":"2024-01-07"]     
 
-    .pipe(extract_datetime_features)    # add cols example 1
-    .pipe(add_date_arithmetic)          # add cols example 2
-    .query('hour >= 6 and hour <= 18')  # filter rows example 2
 
-    .pipe(resample_to_daily)            # resampling aka groupby-like aggregations
-    .pipe(handle_timezones)             # timezone handling
 )

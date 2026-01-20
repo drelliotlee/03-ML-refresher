@@ -6,36 +6,24 @@ from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
 from sklearn.linear_model import LogisticRegression
 from category_encoders import TargetEncoder, LeaveOneOutEncoder, BinaryEncoder, HashingEncoder
 
-np.random.seed(42)
-
-# CREATE SAMPLE DATA
-data = {
-    'color': np.random.choice(['red', 'blue', 'green', 'yellow'], 1000),  # Low cardinality
-    'size': np.random.choice(['small', 'medium', 'large'], 1000),  # Ordered categories
-    'city': np.random.choice(['NYC', 'LA', 'Chicago', 'Houston', 'Phoenix'] + [f'City_{i}' for i in range(50)], 1000),  # High cardinality
-    'user_id': [f'user_{i}' for i in np.random.randint(0, 10000, 1000)],  # Very high cardinality, streaming
-    'income': np.random.randint(30000, 120000, 1000),
-    'age': np.random.randint(18, 80, 1000),
-    'purchased': np.random.randint(0, 2, 1000)  # Binary target
-}
-df = pd.DataFrame(data)
-
-# HARD BOUNDARY - Split features and target
-X = df.drop(columns='purchased')
-y = df['purchased']
-
+X = df.drop(columns='purchased') 
+y = df['purchased'] 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
 # ============================================================================
 # 1. ONE-HOT ENCODING
-# Use for: Low cardinality (<50), no natural order, need interpretability
-# Pros: No false relationships, works with all models | Cons: Dimension explosion
+# Use for: Low cardinality (<50) + no ordinal order
+# Cons: Dimension explosion
 # ============================================================================
 ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
 ohe.fit(X_train[['color']])
 X_train_ohe = ohe.transform(X_train[['color']])
 X_test_ohe = ohe.transform(X_test[['color']])
-# 'color' (1 column) → ['color_red', 'color_blue', 'color_green', 'color_yellow'] (4 columns)
+#   │ COLOR  │  →   │ RED │ BLUE │ GREEN │ YELLOW │
+#   │ red    │      │  1  │  0   │   0   │   0    │
+#   │ blue   │      │  0  │  1   │   0   │   0    │
+#   │ green  │      │  0  │  0   │   1   │   0    │
+#   │ yellow │      │  0  │  0   │   0   │   1    │
 
 # ============================================================================
 # 2. ORDINAL ENCODING
@@ -46,7 +34,10 @@ ord_enc = OrdinalEncoder(categories=[['small', 'medium', 'large']], handle_unkno
 ord_enc.fit(X_train[['size']])
 X_train_ord = ord_enc.transform(X_train[['size']])
 X_test_ord = ord_enc.transform(X_test[['size']])
-# 'size' values: ['small', 'medium', 'large'] → [0, 1, 2] (preserves order)
+#   │ SIZE   │  →    │ SIZE │
+#   │ small  │       │  0   │
+#   │ medium │       │  1   │
+#   │ large  │       │  2   │
 
 # ============================================================================
 # 3. TARGET ENCODING
@@ -57,7 +48,10 @@ target_enc = TargetEncoder(cols=['city'])
 target_enc.fit(X_train, y_train)
 X_train_target = target_enc.transform(X_train)
 X_test_target = target_enc.transform(X_test)
-# 'city' values: ['NYC', 'LA', 'Chicago'] → [0.47, 0.53, 0.45] (mean target per city)
+#   │ CITY    │  →    │ CITY │
+#   │ NYC     │       │ 0.47 │
+#   │ LA      │       │ 0.53 │
+#   │ Chicago │       │ 0.45 │
 
 # ============================================================================
 # 4. LEAVE-ONE-OUT ENCODING
@@ -68,29 +62,38 @@ loo_enc = LeaveOneOutEncoder(cols=['city'])
 loo_enc.fit(X_train, y_train)
 X_train_loo = loo_enc.transform(X_train)
 X_test_loo = loo_enc.transform(X_test)
-# 'city': each row gets mean of other rows from same city (NYC row1→0.48, NYC row2→0.46)
 
 # ============================================================================
 # 5. BINARY ENCODING
 # Use for: High cardinality (100-10K categories), need dimension reduction
-# Pros: far less columns than one-hot | Cons: Creates artificial relationships
+# Pros: far less columns than one-hot
+# Cons: Creates artificial relationships
 # ============================================================================
 binary_enc = BinaryEncoder(cols=['city'])
 binary_enc.fit(X_train)
 X_train_binary = binary_enc.transform(X_train)
 X_test_binary = binary_enc.transform(X_test)
-# 'city' (55 categories) → 6 binary columns (log2(55)≈6): NYC→[0,0,1,1,0,1]
+#   │ CITY    │  →    │ BIN_0 │ BIN_1 │ BIN_2 │ BIN_3 │ BIN_4 │ BIN_5 │
+#   │ NYC     │       │   0   │   0   │   1   │   1   │   0   │   1   │
+#   │ LA      │       │   0   │   1   │   0   │   0   │   1   │   0   │
+#   │ Chicago │       │   0   │   1   │   1   │   0   │   0   │   0   │
+# 'city' (55 categories) → 6 binary columns needed (2^6=64 > 55 categories)
 
 # ============================================================================
 # 6. HASHING ENCODING
 # Use for: >10K categories or streaming data, ex. product SKUs
-# Pros: even less columns than binary | Cons: collisions because multiple categories map to same hash
+# Pros: even less columns than binary
+# Cons: collisions because multiple categories map to same hash
 # ============================================================================
 hash_enc = HashingEncoder(cols=['user_id'], n_components=8)
 hash_enc.fit(X_train)
 X_train_hash = hash_enc.transform(X_train)
 X_test_hash = hash_enc.transform(X_test)
-# 'user_id' (10K unique) → 8 hash columns (user_123→col3=1, user_456→col7=1, collisions occur)
+#   │ USER_ID │  →    │ COL_0 │ COL_1 │ COL_2 │ COL_3 │ COL_4 │ COL_5 │ COL_6 │ COL_7 │
+#   │ user_123│       │   0   │   0   │   0   │   1   │   0   │   0   │   0   │   0   │
+#   │ user_456│       │   0   │   0   │   0   │   0   │   0   │   0   │   1   │   0   │
+#   │ user_789│       │   0   │   0   │   0   │   1   │   0   │   0   │   0   │   0   │  
+# only 8 hash columns ==> collisions bc 2^8=256 << 10K
 
 # ============================================================================
 # EXAMPLE: Full pipeline with mixed encoding

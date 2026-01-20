@@ -146,7 +146,7 @@ class DataValidator:
             raise ValidationError(self.errors)
 
 # Now use DataValidator with explicit columns and rules
-def validate_user_data(df: pd.DataFrame) -> pd.DataFrame:
+def validate_data(df: pd.DataFrame) -> pd.DataFrame:
     validator = DataValidator()   
     (validator
         .check_not_empty(df)
@@ -170,11 +170,11 @@ def validate_user_data(df: pd.DataFrame) -> pd.DataFrame:
 try:
     df_final = (
         df
-        .pipe(validate_user_data)      # validate data at start
+        .pipe(validate_data)      # validate data at start
         # some operations
-        .pipe(validate_user_data)      # validate again      
+        .pipe(validate_data)      # validate again      
         # some operations
-        .pipe(validate_user_data)      # validate data at end
+        .pipe(validate_data)      # validate data at end
     )
     print("✅ Pipeline completed successfully!")
 except ValidationError as e:
