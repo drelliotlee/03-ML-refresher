@@ -41,8 +41,9 @@ X_test_ord = ord_enc.transform(X_test[['size']])
 #   │ large  │       │  2   │
 
 # ============================================================================
-# 3. TARGET ENCODING
+# 3. TARGET MEAN ENCODING
 # Use for: when one-hot would cause dimension explosion (>50 categories)
+# Intuition: replace category with numerical mean of target for that category
 # Cons: technically leakage, but accepted practice
 # ============================================================================
 target_enc = TargetEncoder(cols=['city'])
@@ -56,7 +57,7 @@ X_test_target = target_enc.transform(X_test)
 
 # ============================================================================
 # 4. LEAVE-ONE-OUT ENCODING
-# Technically more correct than target encoding
+# Technically more correct than target mean encoding
 # Cons: unstable for rare categories with only a few rows
 # ============================================================================
 loo_enc = LeaveOneOutEncoder(cols=['city'])
